@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
@@ -23,6 +23,20 @@ type FormData = {
 };
 
 type ServiceKey = RideEstimate['service'];
+
+type UserProfile = {
+  ok: boolean;
+  ip: string;
+  visits?: number;
+  firstSeen?: string;
+  lastSeen?: string;
+  city?: string | null;
+  region?: string | null;
+  country?: string | null;
+  lat?: string | null;
+  lng?: string | null;
+  message?: string;
+};
 
 const SERVICE_META: Record<ServiceKey, { name: string; accent: string; badge: string; tagline: string }> = {
   uber: {
@@ -71,6 +85,9 @@ const formatInr = (value: number) =>
   }).format(value);
 
 export default function RideEstimator() {
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfileError, setUserProfileError] = useState<string | null>(null);
+  const [isUserLoading, setIsUserLoading] = useState(true);
   const [estimates, setEstimates] = useState<RideEstimate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +106,51 @@ export default function RideEstimator() {
       departureTime: '',
     },
   });
+
+  useEffect(() => {
+    let active = true;
+
+    const fetchUserProfile = async () => {
+      try {
+        const response = await fetch('/api/user', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`Failed to load user profile: ${response.status}`);
+        }
+
+        const payload = (await response.json()) as UserProfile;
+        if (!active) {
+          return;
+        }
+
+        if (payload.ok) {
+          setUserProfile(payload);
+          setUserProfileError(null);
+        } else {
+          setUserProfile(payload);
+          setUserProfileError(
+            payload.message ??
+              'Personalised greeting is offline while we reach the database.',
+          );
+        }
+      } catch (err) {
+        if (!active) {
+          return;
+        }
+        console.error(err);
+        setUserProfileError('Personalised greeting is offline while we connect to the database.');
+      } finally {
+        if (active) {
+          setIsUserLoading(false);
+        }
+      }
+    };
+
+    fetchUserProfile();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const onSubmit = async (data: FormData) => {
     setIsLoading(true);
@@ -188,6 +250,22 @@ export default function RideEstimator() {
 
   const departureTime = watch('departureTime');
   const hasResults = estimates.length > 0;
+  const userLocationLabel = useMemo(() => {
+    if (!userProfile) {
+      return null;
+    }
+    const parts = [userProfile.city, userProfile.region, userProfile.country].filter(
+      (value): value is string => Boolean(value),
+    );
+    return parts.length > 0 ? parts.join(', ') : null;
+  }, [userProfile]);
+
+  const userLastSeenLabel = useMemo(() => {
+    if (!userProfile?.lastSeen) {
+      return null;
+    }
+    return formatDistanceToNow(new Date(userProfile.lastSeen), { addSuffix: true });
+  }, [userProfile?.lastSeen]);
 
   return (
     <div className="relative isolate min-h-screen overflow-hidden bg-slate-950 text-slate-100">
@@ -345,6 +423,82 @@ export default function RideEstimator() {
           </div>
 
           <aside className="flex flex-col gap-4">
+            {isUserLoading && (
+              <div className="animate-pulse rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+                <div className="h-4 w-28 rounded-full bg-white/10" />
+                <div className="mt-4 space-y-3">
+                  <div className="h-3 w-3/4 rounded-full bg-white/10" />
+                  <div className="h-3 w-2/3 rounded-full bg-white/10" />
+                  <div className="h-3 w-1/2 rounded-full bg-white/10" />
+                </div>
+              </div>
+            )}
+
+            {!isUserLoading && userProfile && (
+              <div className="rounded-3xl border border-white/10 bg-white/[0.08] p-6 backdrop-blur">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-2xl bg-emerald-400/15 p-3 text-emerald-200">
+                    <FiUser className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-white/50">Personalised view</p>
+                    <p className="text-lg font-semibold text-white">
+                      {userProfile.city ? `Namaste from ${userProfile.city}` : 'Namaste 👋'}
+                    </p>
+                  </div>
+                </div>
+
+                <dl className="mt-5 space-y-3 text-sm text-white/70">
+                  <div className="flex items-center justify-between">
+                    <dt className="text-white/50">Your IP fingerprint</dt>
+                    <dd className="font-mono text-xs text-white/80">{userProfile.ip}</dd>
+                  </div>
+
+                  {userLocationLabel && (
+                    <div className="flex items-center justify-between">
+                      <dt className="flex items-center gap-2 text-white/50">
+                        <FiGlobe className="h-4 w-4" />
+                        Location
+                      </dt>
+                      <dd className="text-right text-white/80">{userLocationLabel}</dd>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between">
+                    <dt className="text-white/50">Visits tracked</dt>
+                    <dd className="font-semibold text-white">{userProfile.visits ?? 1}</dd>
+                  </div>
+
+                  {userLastSeenLabel && (
+                    <div className="flex items-center justify-between text-xs text-white/50">
+                      <dt>Last seen</dt>
+                      <dd>{userLastSeenLabel}</dd>
+                    </div>
+                  )}
+                </dl>
+
+                {!userProfile.ok && userProfileError && (
+                  <p className="mt-4 flex items-center gap-2 text-xs text-amber-200/80">
+                    <FiAlertCircle className="h-4 w-4" />
+                    {userProfileError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {!isUserLoading && !userProfile && userProfileError && (
+              <div className="rounded-3xl border border-rose-500/40 bg-rose-500/10 p-6 text-sm text-rose-100">
+                <div className="flex items-center gap-2 font-medium">
+                  <FiAlertCircle className="h-4 w-4" />
+                  {userProfileError}
+                </div>
+                <p className="mt-3 text-xs text-rose-100/70">
+                  Set the <code className="font-mono">POSTGRES_URL</code> secret in Vercel to enable
+                  anonymous user tracking.
+                </p>
+              </div>
+            )}
+
             <div className="rounded-3xl border border-emerald-400/30 bg-emerald-400/10 p-6 backdrop-blur">
               <h2 className="text-lg font-semibold text-emerald-100">Smart insights</h2>
               <p className="mt-1 text-sm text-emerald-100/70">

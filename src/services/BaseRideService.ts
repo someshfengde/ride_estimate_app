@@ -26,9 +26,11 @@ export abstract class BaseRideService implements RideService {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
+      const body = await response.json().catch(() => undefined);
+      const details =
+        body && typeof body === 'object' ? ` | ${JSON.stringify(body)}` : '';
       throw new Error(
-        `Failed to fetch from ${this.serviceName}: ${response.status} ${response.statusText}`
+        `Failed to fetch from ${this.serviceName}: ${response.status} ${response.statusText}${details}`
       );
     }
 
