@@ -368,7 +368,7 @@ export default function RideEstimator() {
                   </div>
 
                   {pickupFields.map((field, index) => {
-                    const inputId = `pickup-${field.id}`;
+                    const inputId = `pickup-${index}`;
                     const currentValue = pickupValues?.[index]?.value ?? '';
                     const suggestions = pickupSuggestionForValue(currentValue);
                     return (
@@ -690,7 +690,7 @@ export default function RideEstimator() {
                   {userProfileError}
                 </div>
                 <p className="mt-3 text-xs text-rose-100/70">
-                  Set the <code className="font-mono">DB_POSTGRES_URL</code> secret in Vercel to enable
+                  Set the <code className="font-mono">POSTGRES_URL</code> secret in Vercel to enable
                   anonymous user tracking.
                 </p>
               </div>

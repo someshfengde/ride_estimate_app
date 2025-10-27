@@ -19,7 +19,7 @@ An India-first ride comparison experience that helps you balance fares, travel t
    npm install
    ```
 
-2. (Optional but recommended) provision a Vercel Postgres database and grab the `DB_POSTGRES_URL` string from the Vercel dashboard. This enables IP-based identification; without it the UI falls back gracefully.
+2. (Optional but recommended) provision a Vercel Postgres database and grab the `POSTGRES_URL` string from the Vercel dashboard. This enables IP-based identification; without it the UI falls back gracefully.
 
 3. (Optional) add ride provider credentials so the backend can call real APIs. The app falls back to realistic simulations if any key is missing.
    - `UBER_SERVER_TOKEN` *(or set `UBER_BASE_URL` / `UBER_SERVER_TOKEN` if you are proxying via your own gateway)*
@@ -28,7 +28,7 @@ An India-first ride comparison experience that helps you balance fares, travel t
 
 4. Create a `.env.local` file in the project root and add the values you collected:
    ```
-   DB_POSTGRES_URL="postgres://..."
+   POSTGRES_URL="postgres://..."
    UBER_SERVER_TOKEN="token-from-uber"
    OLA_API_KEY="ola-key"
    RAPIDO_API_KEY="rapido-key"
@@ -95,7 +95,7 @@ The recommender data used to power pickup/drop-off suggestions lives in `src/dat
 ## Deployment Tips
 
 - Deploy on Vercel for the smoothest experience—edge headers for location and IP are available out of the box.
-- Add `DB_POSTGRES_URL` (and optionally `POSTGRES_PRISMA_URL` / `DB_POSTGRES_URL_NON_POOLING` if you need them) to the project’s Environment Variables.
+- Add `POSTGRES_URL` (and optionally `POSTGRES_PRISMA_URL` / `POSTGRES_URL_NON_POOLING` if you need them) to the project’s Environment Variables.
 - Populate `UBER_SERVER_TOKEN`, `OLA_API_KEY`, and `RAPIDO_API_KEY` secrets so the aggregator can hit live pricing endpoints. Without them the simulator will continue to serve realistic fares.
 - Promote the same SQL schema shown above before shipping to production.
 
