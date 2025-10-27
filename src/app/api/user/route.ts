@@ -34,7 +34,15 @@ const normaliseIp = (request: NextRequest) => {
   if (forwarded) {
     return forwarded.split(',')[0]?.trim() ?? null;
   }
-  return request.ip ?? null;
+  const vercelForwarded = request.headers.get('x-vercel-forwarded-for');
+  if (vercelForwarded) {
+    return vercelForwarded.split(',')[0]?.trim() ?? null;
+  }
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp.trim();
+  }
+  return null;
 };
 
 export async function GET(request: NextRequest) {
