@@ -100,3 +100,8 @@ The recommender data used to power pickup/drop-off suggestions lives in `src/dat
 - Promote the same SQL schema shown above before shipping to production.
 
 Enjoy the ride planning! Feel free to tune the palettes or extend the providers as you wire up real-time quotes.
+---
+
+## Contributing 
+
+Please open an issue or submit a pull request if you find any bugs or have suggestions for improvement.
