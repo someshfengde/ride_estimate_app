@@ -4,8 +4,10 @@ An India-first ride comparison experience that helps you balance fares, travel t
 
 ### Highlights
 - New dark, cinematic interface engineered for Indian metros with quick route presets.
+- Multi-stop pickup planning with intelligent recommendations tuned to Bengaluru, Mumbai, and Delhi.
 - Smart insights that automatically surface the cheapest, fastest, and most premium choices.
 - Anonymous user recognition backed by Vercel Postgres, keyed off the visitor’s IP (uses the Vercel Edge geo headers when available).
+- Server-side aggregation against Uber, Ola, and Rapido APIs (with graceful simulation fallback when keys are missing).
 - Built with Next.js App Router, React Hook Form, and Tailwind CSS (v4).
 
 ---
@@ -17,19 +19,27 @@ An India-first ride comparison experience that helps you balance fares, travel t
    npm install
    ```
 
-2. (Optional but recommended) provision a Vercel Postgres database and grab the `POSTGRES_URL` string from the Vercel dashboard. This enables IP-based identification; without it the UI falls back gracefully.
+2. (Optional but recommended) provision a Vercel Postgres database and grab the `DB_POSTGRES_URL` string from the Vercel dashboard. This enables IP-based identification; without it the UI falls back gracefully.
 
-3. Create a `.env.local` file in the project root and add:
+3. (Optional) add ride provider credentials so the backend can call real APIs. The app falls back to realistic simulations if any key is missing.
+   - `UBER_SERVER_TOKEN` *(or set `UBER_BASE_URL` / `UBER_SERVER_TOKEN` if you are proxying via your own gateway)*
+   - `OLA_API_KEY`
+   - `RAPIDO_API_KEY`
+
+4. Create a `.env.local` file in the project root and add the values you collected:
    ```
-   POSTGRES_URL="postgres://..."
+   DB_POSTGRES_URL="postgres://..."
+   UBER_SERVER_TOKEN="token-from-uber"
+   OLA_API_KEY="ola-key"
+   RAPIDO_API_KEY="rapido-key"
    ```
 
-4. Start the development server:
+5. Start the development server:
    ```bash
    npm run dev
    ```
 
-5. Visit [http://localhost:3000](http://localhost:3000). The hero card, ride search form, and results carousel are fully client side; the `/api/user` route runs on the server to talk to Postgres.
+6. Visit [http://localhost:3000](http://localhost:3000). The hero card, ride search form, and results carousel are fully client side; the `/api` routes run on the server to talk to Postgres and ride providers.
 
 ---
 
@@ -70,22 +80,23 @@ If the database is unreachable you still get a soft success with `ok: false` and
 
 ---
 
-## Mocked Ride Data
+## Ride Provider Aggregation
 
-The estimator currently ships with curated sample responses in `src/app/ride-estimator.tsx`. They reflect typical Bengaluru/Mumbai fares in INR and power:
+`POST /api/estimates` orchestrates quote lookups across Uber, Ola, and Rapido.
 
-- Quick route presets for airport runs and tech corridors.
-- Insight cards that call out best fare, fastest arrival, and premium upgrades.
-- The sorted ride list with brand-tinted cards.
+- Each provider is implemented as a class extending `BaseRideService` (`src/services/*RideService.ts`).
+- When credentials are present the real API endpoints are called. When they are missing or fail, the simulator in `src/services/pricing.ts` produces realistic INR fares based on the distance, duration, and number of pickups.
+- The aggregator stitches all responses into one array, which the client sorts by price.
 
-Swap the `mockEstimates` array with real integrations (or plug in classes that extend `BaseRideService`) once your provider APIs are ready.
+The recommender data used to power pickup/drop-off suggestions lives in `src/data/locations.ts`. Update this file to expand supported cities or add more curated routes.
 
 ---
 
 ## Deployment Tips
 
 - Deploy on Vercel for the smoothest experience—edge headers for location and IP are available out of the box.
-- Add `POSTGRES_URL` (and optionally `POSTGRES_PRISMA_URL` / `POSTGRES_URL_NON_POOLING` if you need them) to the project’s Environment Variables.
+- Add `DB_POSTGRES_URL` (and optionally `POSTGRES_PRISMA_URL` / `DB_POSTGRES_URL_NON_POOLING` if you need them) to the project’s Environment Variables.
+- Populate `UBER_SERVER_TOKEN`, `OLA_API_KEY`, and `RAPIDO_API_KEY` secrets so the aggregator can hit live pricing endpoints. Without them the simulator will continue to serve realistic fares.
 - Promote the same SQL schema shown above before shipping to production.
 
 Enjoy the ride planning! Feel free to tune the palettes or extend the providers as you wire up real-time quotes.

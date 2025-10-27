@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
         ok: false,
         ip,
         message:
-          'Ride history persistence is offline. Configure Vercel Postgres by setting the POSTGRES_URL environment variable.',
+          'Ride history persistence is offline. Configure Vercel Postgres by setting the DB_POSTGRES_URL environment variable.',
       },
       { status: 200 },
     );

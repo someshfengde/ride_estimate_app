@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useFieldArray, useForm } from 'react-hook-form';
 import { format, formatDistanceToNow } from 'date-fns';
 import {
   FiClock,
@@ -13,11 +13,18 @@ import {
   FiUser,
   FiGlobe,
   FiAlertCircle,
+  FiPlus,
+  FiX,
+  FiStar,
 } from 'react-icons/fi';
 import type { RideEstimate } from '@/types/ride';
+import { getRecommendationsForCity, fuzzySearchLocations } from '@/data/locations';
+import type { LocationRecommendation } from '@/data/locations';
+
+type PickupField = { value: string };
 
 type FormData = {
-  pickup: string;
+  pickupPoints: PickupField[];
   dropoff: string;
   departureTime: string;
 };
@@ -59,23 +66,25 @@ const SERVICE_META: Record<ServiceKey, { name: string; accent: string; badge: st
   },
 };
 
-const QUICK_ROUTES: Array<{ label: string; pickup: string; dropoff: string }> = [
+const QUICK_ROUTES: Array<{ label: string; pickups: string[]; dropoff: string }> = [
   {
-    label: 'Mumbai Airport → BKC',
-    pickup: 'Chhatrapati Shivaji Maharaj International Airport, Mumbai',
-    dropoff: 'Bandra Kurla Complex, Mumbai',
+    label: 'Koramangala + Indiranagar → Bagmane Tech Park',
+    pickups: ['Koramangala 5th Block', 'Indiranagar 100 Feet Road'],
+    dropoff: 'Bagmane Tech Park',
   },
   {
-    label: 'Bengaluru Airport → Indiranagar',
-    pickup: 'Kempegowda International Airport, Bengaluru',
-    dropoff: '100 Feet Road, Indiranagar, Bengaluru',
+    label: 'Bandra + Juhu → CSMIA T2',
+    pickups: ['Bandra West', 'Juhu Scheme'],
+    dropoff: 'Chhatrapati Shivaji Maharaj International Airport',
   },
   {
-    label: 'Cyber Hub → IGI T3',
-    pickup: 'Cyber Hub, Gurugram',
-    dropoff: 'Indira Gandhi International Airport Terminal 3, New Delhi',
+    label: 'Hauz Khas + Saket → IGI T3',
+    pickups: ['Hauz Khas', 'Saket Select City Walk'],
+    dropoff: 'Indira Gandhi International Airport T3',
   },
 ];
+
+const MAX_PICKUPS = 3;
 
 const formatInr = (value: number) =>
   new Intl.NumberFormat('en-IN', {
@@ -84,6 +93,22 @@ const formatInr = (value: number) =>
     maximumFractionDigits: 0,
   }).format(value);
 
+const normaliseName = (value: string) => value.trim().toLowerCase();
+
+const uniqueByName = (items: LocationRecommendation[]) => {
+  const seen = new Set<string>();
+  const result: LocationRecommendation[] = [];
+  items.forEach((item) => {
+    const key = normaliseName(item.name);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    result.push(item);
+  });
+  return result;
+};
+
 export default function RideEstimator() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [userProfileError, setUserProfileError] = useState<string | null>(null);
@@ -91,20 +116,27 @@ export default function RideEstimator() {
   const [estimates, setEstimates] = useState<RideEstimate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [lastSearch, setLastSearch] = useState<{ pickup: string; dropoff: string } | null>(null);
+  const [lastSearch, setLastSearch] = useState<{ pickups: string[]; dropoff: string } | null>(null);
 
   const {
+    control,
     register,
     handleSubmit,
     setValue,
     formState: { errors, isSubmitting },
     watch,
   } = useForm<FormData>({
+    mode: 'onBlur',
     defaultValues: {
-      pickup: '',
+      pickupPoints: [{ value: '' }],
       dropoff: '',
       departureTime: '',
     },
+  });
+
+  const { fields: pickupFields, append, remove, replace } = useFieldArray({
+    control,
+    name: 'pickupPoints',
   });
 
   useEffect(() => {
@@ -152,68 +184,42 @@ export default function RideEstimator() {
     };
   }, []);
 
-  const onSubmit = async (data: FormData) => {
+  const onSubmit = async (formValues: FormData) => {
     setIsLoading(true);
     setError(null);
 
+    const pickupList = (formValues.pickupPoints ?? [])
+      .map((item) => item?.value?.trim())
+      .filter((value): value is string => Boolean(value));
+
+    if (pickupList.length === 0) {
+      setIsLoading(false);
+      setError('Add at least one pick-up point to plan your ride.');
+      return;
+    }
+
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const response = await fetch('/api/estimates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pickups: pickupList,
+          dropoff: formValues.dropoff,
+          departureTime: formValues.departureTime || undefined,
+          city: userProfile?.city,
+        }),
+      });
 
-      const baseDeparture = data.departureTime ? new Date(data.departureTime) : new Date();
+      const payload = (await response.json()) as { ok: boolean; estimates?: RideEstimate[]; message?: string };
 
-      const arrivalIn = (minutes: number) =>
-        new Date(baseDeparture.getTime() + minutes * 60_000).toISOString();
+      if (!response.ok || !payload.ok || !payload.estimates) {
+        throw new Error(payload.message ?? 'Providers did not return any fares.');
+      }
 
-      const mockEstimates: RideEstimate[] = [
-        {
-          service: 'ola',
-          price: 229,
-          currency: 'INR',
-          duration: 32,
-          distance: 14.6,
-          arrivalTime: arrivalIn(35),
-          productName: 'Ola Mini',
-        },
-        {
-          service: 'uber',
-          price: 254,
-          currency: 'INR',
-          duration: 30,
-          distance: 14.6,
-          arrivalTime: arrivalIn(33),
-          productName: 'Uber Go Sedan',
-        },
-        {
-          service: 'rapido',
-          price: 168,
-          currency: 'INR',
-          duration: 28,
-          distance: 14.6,
-          arrivalTime: arrivalIn(30),
-          productName: 'Rapido Bike Taxi',
-        },
-        {
-          service: 'uber',
-          price: 445,
-          currency: 'INR',
-          duration: 29,
-          distance: 14.6,
-          arrivalTime: arrivalIn(31),
-          productName: 'Uber Premier',
-        },
-        {
-          service: 'ola',
-          price: 410,
-          currency: 'INR',
-          duration: 31,
-          distance: 14.6,
-          arrivalTime: arrivalIn(34),
-          productName: 'Ola Prime',
-        },
-      ];
-
-      setEstimates(mockEstimates);
-      setLastSearch({ pickup: data.pickup, dropoff: data.dropoff });
+      setEstimates(payload.estimates);
+      setLastSearch({ pickups: pickupList, dropoff: formValues.dropoff });
     } catch (err) {
       console.error(err);
       setError('Unable to load fares right now. Please try again in a moment.');
@@ -248,8 +254,69 @@ export default function RideEstimator() {
     [estimates, bestDeal],
   );
 
+  const pickupValues = watch('pickupPoints');
+  const dropoffValue = watch('dropoff');
   const departureTime = watch('departureTime');
   const hasResults = estimates.length > 0;
+  const recommendations = useMemo(
+    () => getRecommendationsForCity(userProfile?.city),
+    [userProfile?.city],
+  );
+  const pickupRecommendationList = recommendations.pickups;
+  const dropoffRecommendationList = recommendations.dropoffs;
+  const pickupCombos = recommendations.pickupCombos;
+
+  const selectedPickupNames = useMemo(
+    () =>
+      (pickupValues ?? [])
+        .map((field) => field?.value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    [pickupValues],
+  );
+
+  const pickupSuggestionForValue = (value: string) => {
+    const used = new Set(selectedPickupNames.map(normaliseName));
+    const baseMatches = pickupRecommendationList.filter((item) => {
+      if (used.has(normaliseName(item.name))) {
+        return false;
+      }
+      if (!value.trim()) {
+        return true;
+      }
+      const haystack = `${item.name} ${item.address} ${(item.tags ?? []).join(' ')}`.toLowerCase();
+      return haystack.includes(value.trim().toLowerCase());
+    });
+
+    const fuzzy =
+      value.trim().length > 2
+        ? fuzzySearchLocations(value, 5).filter(
+            (item) => !used.has(normaliseName(item.name)) && normaliseName(item.name) !== normaliseName(value),
+          )
+        : [];
+
+    return uniqueByName([...baseMatches, ...fuzzy]).slice(0, 3);
+  };
+
+  const dropoffSuggestions = useMemo(() => {
+    const used = normaliseName(dropoffValue ?? '');
+
+    const matches = dropoffRecommendationList.filter((item) => {
+      if (!dropoffValue?.trim()) {
+        return true;
+      }
+      const haystack = `${item.name} ${item.address} ${(item.tags ?? []).join(' ')}`.toLowerCase();
+      return haystack.includes(dropoffValue.trim().toLowerCase());
+    });
+
+    const fuzzy =
+      dropoffValue.trim().length > 2
+        ? fuzzySearchLocations(dropoffValue, 6).filter(
+            (item) => normaliseName(item.name) !== used && normaliseName(item.name) !== normaliseName(dropoffValue),
+          )
+        : [];
+
+    return uniqueByName([...matches, ...fuzzy]).slice(0, 5);
+  }, [dropoffRecommendationList, dropoffValue]);
   const userLocationLabel = useMemo(() => {
     if (!userProfile) {
       return null;
@@ -291,24 +358,91 @@ export default function RideEstimator() {
         <section className="grid gap-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
           <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-[0_20px_80px_-28px_rgba(16,185,129,0.35)] backdrop-blur">
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <label htmlFor="pickup" className="text-sm font-medium text-white">
-                    Pick-up point
-                  </label>
-                  <div className="relative">
-                    <FiMapPin className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-                    <input
-                      id="pickup"
-                      type="text"
-                      placeholder="e.g. Koramangala, Bengaluru"
-                      className="w-full rounded-2xl border border-white/10 bg-white/5 px-12 py-3 text-base text-white placeholder-white/40 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40 disabled:cursor-not-allowed"
-                      {...register('pickup', { required: 'Pick-up point is required' })}
-                    />
+              <div className="space-y-6">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-white">Pick-up points</label>
+                    <span className="text-xs uppercase tracking-wide text-white/40">
+                      Plan up to {MAX_PICKUPS} stops
+                    </span>
                   </div>
-                  {errors.pickup && (
-                    <p className="text-sm text-rose-300">{errors.pickup.message}</p>
-                  )}
+
+                  {pickupFields.map((field, index) => {
+                    const inputId = `pickup-${field.id}`;
+                    const currentValue = pickupValues?.[index]?.value ?? '';
+                    const suggestions = pickupSuggestionForValue(currentValue);
+                    return (
+                      <div key={field.id} className="space-y-2">
+                        <div className="flex items-center gap-3">
+                          <div className="relative w-full">
+                            <FiMapPin className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+                            <input
+                              id={inputId}
+                              type="text"
+                              placeholder={index === 0 ? 'e.g. Koramangala 5th Block' : 'Add another pickup'}
+                              className="w-full rounded-2xl border border-white/10 bg-white/5 px-12 py-3 text-base text-white placeholder-white/40 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40 disabled:cursor-not-allowed"
+                              {...register(`pickupPoints.${index}.value` as const, {
+                                required: 'Pick-up point is required',
+                              })}
+                            />
+                          </div>
+                          {pickupFields.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => remove(index)}
+                              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-white/60 transition hover:border-rose-400/40 hover:text-rose-200"
+                              aria-label={`Remove pickup ${index + 1}`}
+                            >
+                              <FiX className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                        {errors.pickupPoints?.[index]?.value && (
+                          <p className="text-sm text-rose-300">
+                            {errors.pickupPoints[index]?.value?.message}
+                          </p>
+                        )}
+                        {suggestions.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {suggestions.map((suggestion) => (
+                              <button
+                                type="button"
+                                key={`${field.id}-suggestion-${suggestion.name}`}
+                                onClick={() =>
+                                  setValue(`pickupPoints.${index}.value`, suggestion.name, {
+                                    shouldDirty: true,
+                                    shouldValidate: true,
+                                  })
+                                }
+                                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.08] px-3 py-1.5 text-xs text-white/75 transition hover:border-emerald-400/60 hover:text-white"
+                              >
+                                <FiStar className="h-3 w-3 text-emerald-300" />
+                                {suggestion.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (pickupFields.length >= MAX_PICKUPS) return;
+                        append({ value: '' });
+                      }}
+                      disabled={pickupFields.length >= MAX_PICKUPS}
+                      className="inline-flex items-center gap-2 rounded-full border border-dashed border-white/20 px-4 py-2 text-sm text-white/70 transition hover:border-emerald-400/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <FiPlus className="h-4 w-4" />
+                      Add another pick-up
+                    </button>
+                    <span className="text-xs text-white/40">
+                      We balance time and price across all your stops.
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
@@ -320,7 +454,7 @@ export default function RideEstimator() {
                     <input
                       id="dropoff"
                       type="text"
-                      placeholder="e.g. Indiranagar, Bengaluru"
+                      placeholder="e.g. Manyata Tech Park"
                       className="w-full rounded-2xl border border-white/10 bg-white/5 px-12 py-3 text-base text-white placeholder-white/40 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/40 disabled:cursor-not-allowed"
                       {...register('dropoff', { required: 'Drop-off point is required' })}
                     />
@@ -328,9 +462,29 @@ export default function RideEstimator() {
                   {errors.dropoff && (
                     <p className="text-sm text-rose-300">{errors.dropoff.message}</p>
                   )}
+                  {dropoffSuggestions.length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {dropoffSuggestions.map((suggestion) => (
+                        <button
+                          type="button"
+                          key={`dropoff-${suggestion.name}`}
+                          onClick={() =>
+                            setValue('dropoff', suggestion.name, {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            })
+                          }
+                          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.08] px-3 py-1.5 text-xs text-white/75 transition hover:border-emerald-400/60 hover:text-white"
+                        >
+                          <FiStar className="h-3 w-3 text-emerald-300" />
+                          {suggestion.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <div className="space-y-2 sm:col-span-2">
+                <div className="space-y-2">
                   <label htmlFor="departureTime" className="text-sm font-medium text-white">
                     When do you want to leave?
                   </label>
@@ -351,20 +505,63 @@ export default function RideEstimator() {
                 </div>
               </div>
 
-              <div className="flex flex-wrap gap-3">
-                {QUICK_ROUTES.map((route) => (
-                  <button
-                    key={route.label}
-                    type="button"
-                    onClick={() => {
-                      setValue('pickup', route.pickup);
-                      setValue('dropoff', route.dropoff);
-                    }}
-                    className="rounded-full border border-white/10 bg-white/[0.08] px-4 py-2 text-sm text-white/80 transition hover:border-emerald-400/60 hover:text-white"
-                  >
-                    {route.label}
-                  </button>
-                ))}
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-white">
+                    <FiStar className="h-4 w-4 text-emerald-300" />
+                    Smart pickup bundles for you
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {pickupCombos.map((combo) => (
+                      <button
+                        key={combo.description}
+                        type="button"
+                        onClick={() => {
+                          const picks = combo.pickups.slice(0, MAX_PICKUPS);
+                          replace(picks.length > 0 ? picks.map((value) => ({ value })) : [{ value: '' }]);
+                          setValue('dropoff', combo.dropoff, {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          });
+                        }}
+                        className="rounded-2xl border border-white/10 bg-white/[0.06] p-4 text-left text-sm text-white/80 transition hover:border-emerald-400/60 hover:bg-white/[0.08] hover:text-white"
+                      >
+                        <p className="font-semibold text-white">{combo.description}</p>
+                        <p className="mt-2 text-xs uppercase tracking-wide text-white/40">
+                          Pick-ups
+                        </p>
+                        <p className="text-sm text-white/70">{combo.pickups.join(' • ')}</p>
+                        <p className="mt-2 text-xs uppercase tracking-wide text-white/40">
+                          Drop-off
+                        </p>
+                        <p className="text-sm text-white/70">{combo.dropoff}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-white">Popular metro presets</p>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    {QUICK_ROUTES.map((route) => (
+                      <button
+                        key={route.label}
+                        type="button"
+                        onClick={() => {
+                          const picks = route.pickups.slice(0, MAX_PICKUPS);
+                          replace(picks.length > 0 ? picks.map((value) => ({ value })) : [{ value: '' }]);
+                          setValue('dropoff', route.dropoff, {
+                            shouldDirty: true,
+                            shouldValidate: true,
+                          });
+                        }}
+                        className="rounded-full border border-white/10 bg-white/[0.08] px-4 py-2 text-sm text-white/80 transition hover:border-emerald-400/60 hover:text-white"
+                      >
+                        {route.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
@@ -493,7 +690,7 @@ export default function RideEstimator() {
                   {userProfileError}
                 </div>
                 <p className="mt-3 text-xs text-rose-100/70">
-                  Set the <code className="font-mono">POSTGRES_URL</code> secret in Vercel to enable
+                  Set the <code className="font-mono">DB_POSTGRES_URL</code> secret in Vercel to enable
                   anonymous user tracking.
                 </p>
               </div>
@@ -566,9 +763,14 @@ export default function RideEstimator() {
             {lastSearch && (
               <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6 text-sm text-white/70 backdrop-blur">
                 <h3 className="text-base font-semibold text-white">Current route</h3>
-                <p className="mt-3">
-                  <span className="text-white/80">From:</span> {lastSearch.pickup}
-                </p>
+                <div className="mt-3 space-y-1">
+                  <span className="text-white/80">Pick-ups:</span>
+                  <ul className="mt-1 list-inside list-disc text-sm text-white/70">
+                    {lastSearch.pickups.map((pickup) => (
+                      <li key={pickup}>{pickup}</li>
+                    ))}
+                  </ul>
+                </div>
                 <p className="mt-2">
                   <span className="text-white/80">To:</span> {lastSearch.dropoff}
                 </p>

@@ -17,9 +17,12 @@ export interface RideEstimate {
 }
 
 export interface RideRequest {
-  pickup: Location;
+  pickups: Location[];
   dropoff: Location;
   departureTime?: Date;
+  city?: string;
+  approxDistanceKm?: number;
+  approxDurationMinutes?: number;
 }
 
 export interface RideService {

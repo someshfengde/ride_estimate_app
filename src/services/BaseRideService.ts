@@ -14,15 +14,17 @@ export abstract class BaseRideService implements RideService {
   abstract getEstimates(request: RideRequest): Promise<RideEstimate[]>;
 
   protected async makeRequest(endpoint: string, options: RequestInit = {}) {
-    const headers = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`,
-      ...(options.headers || {})
-    };
+    const headers = new Headers(options.headers ?? {});
+    if (!headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (this.apiKey && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${this.apiKey}`);
+    }
 
     const response = await fetch(`${this.baseUrl}${endpoint}`, {
       ...options,
-      headers
+      headers,
     });
 
     if (!response.ok) {
